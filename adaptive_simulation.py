@@ -19,6 +19,28 @@ PACKET_SIZE = 2000  # bits per packet
 DUMMY_ROTATION_INTERVAL = 50
 
 
+class Adversary:
+    def __init__(self, start_node):
+        self.current_node = start_node
+        self.hop_count = 0
+        self.is_captured = False
+
+    def step(self, transmissions, G, source_nodes):
+        # transmissions is a dict: {sender_node_id: transmission_count}
+        # The adversary only hears nodes within its 80m communication range (its graph neighbors)
+        neighbors = list(G.neighbors(self.current_node))
+        
+        heard_senders = {node: count for node, count in transmissions.items() if node in neighbors}
+
+        if heard_senders:
+            # Traffic Analysis: move to the node that transmitted the most packets
+            next_node = max(heard_senders, key=heard_senders.get)
+            self.current_node = next_node
+            self.hop_count += 1
+
+            if self.current_node in source_nodes:
+                self.is_captured = True
+
 def get_fixed_sources(G, num_sources=4):
     """
     Selects 4 source nodes based on the Scenario All Directions (SAD) geometry.
@@ -139,6 +161,7 @@ def run_adaptive_simulation():
     current_dummy_sources = []
     
     csv_filename = "adaptive_results.csv"
+    # Log to CSV using the normalized plot variable, NOT the PSO sum
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f"])
@@ -161,19 +184,29 @@ def run_adaptive_simulation():
                 # Select 2 distinct decoy nodes
                 current_dummy_sources = random.sample(active_sensors, min(2, len(active_sensors)))
 
+
+        # 1. State Evaluation & PSO Update
         # 1. State Evaluation & PSO Update
         if current_round % PSO_UPDATE_INTERVAL == 0:
             all_sensor_energies = sorted([max(0, G.nodes[n]['energy']) for n in G.nodes() if G.nodes[n]['type'] == 'sensor'])
-            weakest_10_avg = sum(all_sensor_energies[:10]) / INITIAL_ENERGY
-            energy_ratio = weakest_10_avg
+            
+            # Calculate the true average (0.0 to 1.0)
+            plot_energy_ratio = (sum(all_sensor_energies[:10]) / 10) / INITIAL_ENERGY
+            
+            # Apply the 1.11 multiplier to trigger decay at 90% battery
+            energy_ratio_for_pso = plot_energy_ratio * 1.11 
+            
             coverage_ratio = (NUM_NODES - dead_nodes) / NUM_NODES
             
-            current_k, current_f = run_pso(energy_ratio, coverage_ratio)
-            
+            # Run PSO with the scaled ratio
+            current_k, current_f = run_pso(energy_ratio_for_pso, coverage_ratio)
+
+            # Log data using the true AVERAGE
             with open(csv_filename, mode='a', newline='') as file:
                 writer = csv.writer(file)
-                writer.writerow([current_round, round(energy_ratio, 4), round(coverage_ratio, 4), current_k, round(current_f, 4)])
+                writer.writerow([current_round, round(plot_energy_ratio, 4), round(coverage_ratio, 4), current_k, current_f])
             
+
         # 2. Routing Phase
         for source_node in fixed_sources:
             if G.nodes[source_node]['energy'] <= 0:

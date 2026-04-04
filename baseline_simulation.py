@@ -25,6 +25,30 @@ PACKET_SIZE = 2000  # bits per packet
 K_PHANTOM_HOPS = 8
 FAKE_TRAFFIC_RATIO = 0.5
 
+
+class Adversary:
+    def __init__(self, start_node):
+        self.current_node = start_node
+        self.hop_count = 0
+        self.is_captured = False
+
+    def step(self, transmissions, G, source_nodes):
+        # transmissions is a dict: {sender_node_id: transmission_count}
+        # The adversary only hears nodes within its 80m communication range (its graph neighbors)
+        neighbors = list(G.neighbors(self.current_node))
+        
+        heard_senders = {node: count for node, count in transmissions.items() if node in neighbors}
+
+        if heard_senders:
+            # Traffic Analysis: move to the node that transmitted the most packets
+            next_node = max(heard_senders, key=heard_senders.get)
+            self.current_node = next_node
+            self.hop_count += 1
+
+            if self.current_node in source_nodes:
+                self.is_captured = True
+
+
 def random_walk(G, start_node, steps):
     current_node = start_node
     path = [current_node]
@@ -151,6 +175,8 @@ def run_simulation():
         writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f"])
         
     print(f"Starting simulation loop. Logging to {csv_filename}...")
+
+    
     
     for current_round in range(MAX_ROUNDS):
         packets_delivered_this_round = 0
