@@ -176,10 +176,11 @@ def run_simulation():
         
     print(f"Starting simulation loop. Logging to {csv_filename}...")
 
-    
+    hunter = Adversary(start_node="SINK")
     
     for current_round in range(MAX_ROUNDS):
         packets_delivered_this_round = 0
+        round_transmissions = {}
         
         # --- Baseline State Logging ---
         all_sensor_energies = sorted([max(0, G.nodes[n]['energy']) for n in G.nodes() if G.nodes[n]['type'] == 'sensor'])
@@ -209,6 +210,9 @@ def run_simulation():
             if full_path:
                 deduct_energy(G, full_path)
                 packets_delivered_this_round += 1
+                for i in range(len(full_path) - 1):
+                    sender = full_path[i]
+                    round_transmissions[sender] = round_transmissions.get(sender, 0) + 1
                 
             if random.random() < FAKE_TRAFFIC_RATIO:
                 active_nodes = [n for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] > 0]
@@ -217,6 +221,16 @@ def run_simulation():
                     fake_path = route_to_sink(G, fake_source)
                     if fake_path:
                         deduct_energy(G, fake_path)
+                        for i in range(len(fake_path) - 1):
+                            sender = fake_path[i]
+                            round_transmissions[sender] = round_transmissions.get(sender, 0) + 1
+        
+        # --- Adversary Step ---
+        if not hunter.is_captured:
+            hunter.step(round_transmissions, G, fixed_sources)
+            if hunter.is_captured:
+                print(f"Source CAPTURED at Round {current_round}! Safety Period: {hunter.hop_count} hops.")
+                break
         
         # --- Network State Check ---
         current_dead = sum(1 for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] <= 0)

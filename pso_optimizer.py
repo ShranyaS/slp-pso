@@ -10,33 +10,34 @@ def fitness_function(particles, energy_ratio, coverage_ratio):
     n_particles = particles.shape[0]
     costs = np.zeros(n_particles)
     
-    # Critical thresholds before network partition
-    er_critical = 0.05
-    cr_critical = 0.80
-    
-    # Calculate penalty multipliers (bounded between 0 and 1)
-    er_penalty = max(0.0, energy_ratio - er_critical) / (1.0 - er_critical)
-    cr_penalty = max(0.0, coverage_ratio - cr_critical) / (1.0 - cr_critical)
-    
-    # Exponential steepness for the penalty curve
-    gamma = 3.0
-    lam = 2.0
-    
-    P = (er_penalty ** gamma) * (cr_penalty ** lam)
-    
     for i in range(n_particles):
         k = particles[i, 0]
         f = particles[i, 1]
         
-        # Base Utility (Normalize k based on max 12.0, f based on max 0.5)
+        # 1. Base Utility (Normalize k based on max 12.0, f based on max 0.5)
         k_norm = k / 12.0
         f_norm = f / 0.5
         
         # Utility Weights (60% importance on k, 40% on f)
         U = (0.6 * k_norm) + (0.4 * f_norm)
         
+        # 2. Multiplicative Constraint Penalty
+        # The particle's normalized cost must not exceed the available energy ratio
+        particle_cost = U 
+        
+        if particle_cost <= energy_ratio:
+            energy_penalty = 1.0
+        else:
+            # Exponentially penalize particles that demand more energy than what is safely available
+            energy_penalty = np.exp(-10.0 * (particle_cost - energy_ratio))
+            
+        # 3. Coverage Penalty
+        cr_penalty = 1.0
+        if coverage_ratio < 0.85:
+            cr_penalty = np.exp(-20.0 * (0.85 - coverage_ratio))
+            
         # Calculate final MPM fitness
-        fitness = U * P
+        fitness = U * energy_penalty * cr_penalty
         
         # PySwarms minimizes, so return negative fitness to maximize
         costs[i] = -fitness
