@@ -4,7 +4,7 @@ import pyswarms as ps
 # Define Optimization Bounds
 # x[0] = k (phantom hops): between 2 and 15
 # x[1] = f (fake traffic ratio): between 0.0 and 1.0
-BOUNDS = (np.array([2.0, 0.0]), np.array([12.0, 0.5]))
+BOUNDS = (np.array([2.0, 0.0]), np.array([10.0, 0.5]))
 
 def fitness_function(particles, energy_ratio, coverage_ratio):
     n_particles = particles.shape[0]

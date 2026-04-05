@@ -147,9 +147,11 @@ def deduct_energy(G, path):
             G.nodes[receiver]['energy'] -= rx_energy
 
 
-def run_adaptive_simulation():
-    print("Initializing adaptive network...")
-    G = create_wsn_graph(seed=42)
+def run_adaptive_simulation(seed_val=42):
+    random.seed(seed_val)
+    print(f"Initializing adaptive network with seed {seed_val}...")
+    G = create_wsn_graph(seed=seed_val)
+    
     fixed_sources = get_fixed_sources(G, num_sources=4)
     print(f"Selected Source Nodes: {fixed_sources}")
     
@@ -160,7 +162,7 @@ def run_adaptive_simulation():
     current_f = 0.5
     current_dummy_sources = []
     
-    csv_filename = "adaptive_results.csv"
+    csv_filename = f"results/adaptive_results_{seed_val}.csv"
     # Log to CSV using the normalized plot variable, NOT the PSO sum
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
@@ -169,6 +171,7 @@ def run_adaptive_simulation():
     print(f"Starting adaptive simulation loop. Logging to {csv_filename}...")
 
     hunter = Adversary(start_node="SINK")
+    total_captures = 0
     
     for current_round in range(MAX_ROUNDS):
         packets_delivered = 0
@@ -189,7 +192,6 @@ def run_adaptive_simulation():
 
 
         # 1. State Evaluation & PSO Update
-        # 1. State Evaluation & PSO Update
         if current_round % PSO_UPDATE_INTERVAL == 0:
             all_sensor_energies = sorted([max(0, G.nodes[n]['energy']) for n in G.nodes() if G.nodes[n]['type'] == 'sensor'])
             
@@ -197,12 +199,17 @@ def run_adaptive_simulation():
             plot_energy_ratio = (sum(all_sensor_energies[:10]) / 10) / INITIAL_ENERGY
             
             # Apply the 1.11 multiplier to trigger decay at 90% battery
-            energy_ratio_for_pso = plot_energy_ratio * 1.11 
+            energy_ratio_for_pso = plot_energy_ratio * 1.0
             
             coverage_ratio = (NUM_NODES - dead_nodes) / NUM_NODES
             
             # Run PSO with the scaled ratio
             current_k, current_f = run_pso(energy_ratio_for_pso, coverage_ratio)
+
+            
+            # Enforce absolute minimum privacy thresholds
+            current_k = max(5, current_k)  # Never drop below 5 phantom hops
+            current_f = max(0.2, current_f) # Never drop below 20% fake traffic probability
 
             # Log data using the true AVERAGE
             with open(csv_filename, mode='a', newline='') as file:
@@ -242,11 +249,11 @@ def run_adaptive_simulation():
                             round_transmissions[sender] = round_transmissions.get(sender, 0) + 1
         
         # --- Adversary Step ---
-        if not hunter.is_captured:
-            hunter.step(round_transmissions, G, fixed_sources)
-            if hunter.is_captured:
-                print(f"Source CAPTURED at Round {current_round}! Safety Period: {hunter.hop_count} hops.")
-                break
+        hunter.step(round_transmissions, G, fixed_sources)
+        if hunter.is_captured:
+            total_captures += 1
+            print(f"Source Node {hunter.current_node} CAPTURED at Round {current_round}! Safety Period: {hunter.hop_count} hops. Total Captures: {total_captures}")
+            hunter = Adversary(start_node="SINK")  # Reset to sink
                 
         
         # 3. Network State Check
@@ -267,7 +274,9 @@ def run_adaptive_simulation():
 
     print(f"\n--- Adaptive Simulation Complete ---")
     print(f"Total Rounds Survived: {rounds_survived}")
+    print(f"Total Captures (Capture Ratio metric): {total_captures}")
     print(f"Total Dead Nodes: {dead_nodes}")
+    return rounds_survived, total_captures, dead_nodes
 
 
 if __name__ == "__main__":

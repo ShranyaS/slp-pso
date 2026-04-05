@@ -157,9 +157,11 @@ def get_fixed_sources(G, num_sources=4):
             
     return sources
 
-def run_simulation():
-    print("Initializing network...")
-    G = create_wsn_graph(seed=42)
+def run_simulation(seed_val=42):
+    random.seed(seed_val)
+    print(f"Initializing network with seed {seed_val}...")
+    G = create_wsn_graph(seed=seed_val)
+    
     
     print("Locating connected source nodes...")
     fixed_sources = get_fixed_sources(G, num_sources=4)
@@ -169,7 +171,7 @@ def run_simulation():
     rounds_survived = 0
     
     # --- CSV Setup ---
-    csv_filename = "baseline_results.csv"
+    csv_filename = f"results/adaptive_results_{seed_val}.csv"
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f"])
@@ -177,6 +179,7 @@ def run_simulation():
     print(f"Starting simulation loop. Logging to {csv_filename}...")
 
     hunter = Adversary(start_node="SINK")
+    total_captures = 0
     
     for current_round in range(MAX_ROUNDS):
         packets_delivered_this_round = 0
@@ -226,11 +229,11 @@ def run_simulation():
                             round_transmissions[sender] = round_transmissions.get(sender, 0) + 1
         
         # --- Adversary Step ---
-        if not hunter.is_captured:
-            hunter.step(round_transmissions, G, fixed_sources)
-            if hunter.is_captured:
-                print(f"Source CAPTURED at Round {current_round}! Safety Period: {hunter.hop_count} hops.")
-                break
+        hunter.step(round_transmissions, G, fixed_sources)
+        if hunter.is_captured:
+            total_captures += 1
+            print(f"Source Node {hunter.current_node} CAPTURED at Round {current_round}! Safety Period: {hunter.hop_count} hops. Total Captures: {total_captures}")
+            hunter = Adversary(start_node="SINK")  # Reset to sink
         
         # --- Network State Check ---
         current_dead = sum(1 for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] <= 0)
@@ -247,6 +250,13 @@ def run_simulation():
         if dead_nodes >= 0.2 * NUM_NODES:
             print(f"Critical failure threshold (20%) reached at round {current_round}.")
             break
+
+    print(f"\n--- Baseline Simulation Complete ---")
+    print(f"Total Rounds Survived: {rounds_survived}")
+    print(f"Total Dead Nodes: {dead_nodes}")
+    print(f"Total Captures (Capture Ratio metric): {total_captures}")
+
+    return rounds_survived, total_captures, dead_nodes
 
 
 if __name__ == "__main__":
