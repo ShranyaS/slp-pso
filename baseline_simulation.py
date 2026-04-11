@@ -6,7 +6,7 @@ import itertools
 import csv
 import math
 import networkx as nx
-
+import numpy as np
 
 # Simulation Parameters
 MAX_ROUNDS = 3000
@@ -21,10 +21,8 @@ E_AMP = 100e-12     # 100 pJ/bit/m^2 for the amplifier
 PACKET_SIZE = 2000  # bits per packet
 
 
-# Static Protocol Parameters (Fixed for the entire simulation)
-K_PHANTOM_HOPS = 8
-FAKE_TRAFFIC_RATIO = 0.5
 
+DUMMY_ROTATION_INTERVAL = 50
 
 class Adversary:
     def __init__(self, start_node):
@@ -49,13 +47,16 @@ class Adversary:
                 self.is_captured = True
 
 
-def random_walk(G, start_node, steps):
+
+def random_walk(G, start_node, steps, directed_steps=3):
     current_node = start_node
     path = [current_node]
-    visited = {current_node}  # Initialized as a set for O(1) lookup
+    visited = {current_node}
     
-    for _ in range(int(steps)):
-        # List comprehension filters dead nodes and visited nodes simultaneously
+    # Get the physical coordinates of the source node
+    start_pos = np.array(G.nodes[start_node]['pos'])
+    
+    for i in range(int(steps)):
         valid_neighbors = [
             n for n in G.neighbors(current_node) 
             if n not in visited and G.nodes[n]['energy'] > 0
@@ -64,7 +65,23 @@ def random_walk(G, start_node, steps):
         if not valid_neighbors:
             break  
             
-        current_node = random.choice(valid_neighbors)
+        if i < directed_steps:
+            # Phase 1: Directed Walk (Move outward from source)
+            current_dist = np.linalg.norm(np.array(G.nodes[current_node]['pos']) - start_pos)
+            outward_neighbors = [
+                n for n in valid_neighbors 
+                if np.linalg.norm(np.array(G.nodes[n]['pos']) - start_pos) > current_dist
+            ]
+            
+            # If an outward step is possible, take it. Otherwise, fall back to random.
+            if outward_neighbors:
+                current_node = random.choice(outward_neighbors)
+            else:
+                current_node = random.choice(valid_neighbors)
+        else:
+            # Phase 2: Pure Random Walk
+            current_node = random.choice(valid_neighbors)
+            
         path.append(current_node)
         visited.add(current_node)
         
@@ -171,7 +188,7 @@ def run_simulation(seed_val=42):
     rounds_survived = 0
     
     # --- CSV Setup ---
-    csv_filename = f"results/adaptive_results_{seed_val}.csv"
+    csv_filename = f"results/baseline_results_{seed_val}.csv"
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f"])
@@ -180,8 +197,22 @@ def run_simulation(seed_val=42):
 
     hunter = Adversary(start_node="SINK")
     total_captures = 0
+
+    current_dummy_sources = []
     
     for current_round in range(MAX_ROUNDS):
+
+        # --- Decoy (Dummy Source) Rotation Logic ---
+        if (current_round % DUMMY_ROTATION_INTERVAL == 0 or 
+            not current_dummy_sources or 
+            any(G.nodes[d]['energy'] <= 0 for d in current_dummy_sources)):
+
+            active_sensors = [n for n in G.nodes() if G.nodes[n]['type'] == 'sensor' 
+                            and G.nodes[n]['energy'] > 0 
+                            and n not in fixed_sources]
+            if active_sensors:
+                current_dummy_sources = random.sample(active_sensors, min(2, len(active_sensors)))
+                
         packets_delivered_this_round = 0
         round_transmissions = {}
         
@@ -217,10 +248,9 @@ def run_simulation(seed_val=42):
                     sender = full_path[i]
                     round_transmissions[sender] = round_transmissions.get(sender, 0) + 1
                 
-            if random.random() < FAKE_TRAFFIC_RATIO:
-                active_nodes = [n for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] > 0]
-                if active_nodes:
-                    fake_source = random.choice(active_nodes)
+            if random.random() < FAKE_TRAFFIC_RATIO and current_dummy_sources:
+                fake_source = random.choice(current_dummy_sources)
+                if G.nodes[fake_source]['energy'] > 0:
                     fake_path = route_to_sink(G, fake_source)
                     if fake_path:
                         deduct_energy(G, fake_path)

@@ -5,11 +5,12 @@ from adaptive_simulation import run_adaptive_simulation as run_adaptive
 def run_comparison(seed_value=105):
     print(f"--- Running Baseline Model (Seed: {seed_value}) ---")
     random.seed(seed_value)
-    base_rounds, base_captures, base_dead = run_baseline()
+    base_rounds, base_captures, base_dead = run_baseline(seed_val=seed_value)
+    
 
     print(f"\n--- Running Adaptive Model (Seed: {seed_value}) ---")
     random.seed(seed_value)
-    adapt_rounds, adapt_captures, adapt_dead = run_adaptive()
+    adapt_rounds, adapt_captures, adapt_dead = run_adaptive(seed_val=seed_value)
 
     print("\n" + "="*45)
     print(f"{'Metric':<20} | {'Baseline':<10} | {'Adaptive':<10}")

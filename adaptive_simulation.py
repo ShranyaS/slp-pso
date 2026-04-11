@@ -6,7 +6,7 @@ import itertools
 import csv
 import math
 import networkx as nx
-
+import numpy as np
 
 # Simulation Parameters
 MAX_ROUNDS = 3000
@@ -83,13 +83,15 @@ def get_fixed_sources(G, num_sources=4):
             
     return sources
 
-def random_walk(G, start_node, steps):
+def random_walk(G, start_node, steps, directed_steps=3):
     current_node = start_node
     path = [current_node]
-    visited = {current_node}  # Initialized as a set for O(1) lookup
+    visited = {current_node}
     
-    for _ in range(int(steps)):
-        # List comprehension filters dead nodes and visited nodes simultaneously
+    # Get the physical coordinates of the source node
+    start_pos = np.array(G.nodes[start_node]['pos'])
+    
+    for i in range(int(steps)):
         valid_neighbors = [
             n for n in G.neighbors(current_node) 
             if n not in visited and G.nodes[n]['energy'] > 0
@@ -98,12 +100,27 @@ def random_walk(G, start_node, steps):
         if not valid_neighbors:
             break  
             
-        current_node = random.choice(valid_neighbors)
+        if i < directed_steps:
+            # Phase 1: Directed Walk (Move outward from source)
+            current_dist = np.linalg.norm(np.array(G.nodes[current_node]['pos']) - start_pos)
+            outward_neighbors = [
+                n for n in valid_neighbors 
+                if np.linalg.norm(np.array(G.nodes[n]['pos']) - start_pos) > current_dist
+            ]
+            
+            # If an outward step is possible, take it. Otherwise, fall back to random.
+            if outward_neighbors:
+                current_node = random.choice(outward_neighbors)
+            else:
+                current_node = random.choice(valid_neighbors)
+        else:
+            # Phase 2: Pure Random Walk
+            current_node = random.choice(valid_neighbors)
+            
         path.append(current_node)
         visited.add(current_node)
         
     return path, current_node
-
 
 def route_to_sink(G, start_node):
     """Routes the packet to the sink using randomized dynamic weights for fast multipath."""
@@ -193,30 +210,32 @@ def run_adaptive_simulation(seed_val=42):
 
         # 1. State Evaluation & PSO Update
         if current_round % PSO_UPDATE_INTERVAL == 0:
-            all_sensor_energies = sorted([max(0, G.nodes[n]['energy']) for n in G.nodes() if G.nodes[n]['type'] == 'sensor'])
+            alive_sensor_energies = sorted([G.nodes[n]['energy'] for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] > 0])
             
-            # Calculate the true average (0.0 to 1.0)
-            plot_energy_ratio = (sum(all_sensor_energies[:10]) / 10) / INITIAL_ENERGY
-            
-            # Apply the 1.11 multiplier to trigger decay at 90% battery
-            energy_ratio_for_pso = plot_energy_ratio * 1.0
-            
+            if alive_sensor_energies:
+                # Average of the 10 most depleted nodes
+                min_energy_avg = sum(alive_sensor_energies[:10]) / 10.0
+                
+                # Average of the top 10% healthiest nodes
+                top_count = max(1, int(len(alive_sensor_energies) * 0.10))
+                max_energy_avg = sum(alive_sensor_energies[-top_count:]) / top_count
+                
+                # Calculate the gap (0.0 to 1.0). 0 means perfectly balanced, 1 means extreme imbalance.
+                energy_gap = (max_energy_avg - min_energy_avg) / INITIAL_ENERGY
+            else:
+                energy_gap = 1.0
+
             coverage_ratio = (NUM_NODES - dead_nodes) / NUM_NODES
             
-            # Run PSO with the scaled ratio
-            current_k, current_f = run_pso(energy_ratio_for_pso, coverage_ratio)
+            # Pass the gap instead of the absolute ratio
+            current_k, current_f = run_pso(energy_gap, coverage_ratio)
+            
+            # Enforce stricter minimum privacy thresholds
+            # Allow deeper late-game energy savings
+            current_k = max(5, current_k)  
+            current_f = max(0.2, current_f)
 
             
-            # Enforce absolute minimum privacy thresholds
-            current_k = max(5, current_k)  # Never drop below 5 phantom hops
-            current_f = max(0.2, current_f) # Never drop below 20% fake traffic probability
-
-            # Log data using the true AVERAGE
-            with open(csv_filename, mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([current_round, round(plot_energy_ratio, 4), round(coverage_ratio, 4), current_k, current_f])
-            
-
         # 2. Routing Phase
         for source_node in fixed_sources:
             if G.nodes[source_node]['energy'] <= 0:
