@@ -206,12 +206,37 @@ def run_simulation(seed_val=42):
         if (current_round % DUMMY_ROTATION_INTERVAL == 0 or 
             not current_dummy_sources or 
             any(G.nodes[d]['energy'] <= 0 for d in current_dummy_sources)):
-
+            
             active_sensors = [n for n in G.nodes() if G.nodes[n]['type'] == 'sensor' 
-                            and G.nodes[n]['energy'] > 0 
-                            and n not in fixed_sources]
+                              and G.nodes[n]['energy'] > 0 
+                              and n not in fixed_sources]
+            
             if active_sensors:
-                current_dummy_sources = random.sample(active_sensors, min(2, len(active_sensors)))
+                active_real_sources = [s for s in fixed_sources if G.nodes[s]['energy'] > 0]
+                
+                # If all sources are dead, fallback to random
+                if not active_real_sources:
+                    current_dummy_sources = random.sample(active_sensors, min(2, len(active_sensors)))
+                else:
+                    # Spatial Decoy Maximization (Max-Min Distance)
+                    candidate_distances = []
+                    for candidate in active_sensors:
+                        cand_pos = np.array(G.nodes[candidate]['pos'])
+                        
+                        # Calculate distance to the closest active real source
+                        min_dist = min(
+                            np.linalg.norm(cand_pos - np.array(G.nodes[s]['pos'])) 
+                            for s in active_real_sources
+                        )
+                        candidate_distances.append((candidate, min_dist))
+                    
+                    # Sort descending (largest minimum distance first)
+                    candidate_distances.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # Select the 2 furthest nodes
+                    top_n = min(2, len(candidate_distances))
+                    current_dummy_sources = [node for node, dist in candidate_distances[:top_n]]
+                    
                 
         packets_delivered_this_round = 0
         round_transmissions = {}
