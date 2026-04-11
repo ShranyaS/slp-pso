@@ -41,30 +41,24 @@ class Adversary:
             if self.current_node in source_nodes:
                 self.is_captured = True
 
-def get_fixed_sources(G, num_sources=4):
+def get_fixed_sources(G, num_sources=8):
     """
-    Selects 4 source nodes based on the Scenario All Directions (SAD) geometry.
+    Selects source nodes based on the Scenario All Directions (SAD) geometry.
     Nodes are placed N, S, E, W at approximately 25 hops from the sink.
     """
-    # Cast the generator to a dictionary
     hop_lengths = dict(nx.single_target_shortest_path_length(G, "SINK"))
-    
     candidates = {'N': [], 'S': [], 'E': [], 'W': []}
     
     for n in G.nodes():
         if G.nodes[n]['type'] == 'sensor' and n in hop_lengths:
             hops = hop_lengths[n]
             
-            # Filter nodes that are near the 25-hop target distance
             if 20 <= hops <= 30:
                 x, y = G.nodes[n]['pos']
-                
-                # Calculate angle relative to the sink at (1000, 1000)
                 dx = x - 1000.0
                 dy = y - 1000.0
                 angle = math.degrees(math.atan2(dy, dx))
                 
-                # Group by geometric quadrant and store deviation from exactly 25 hops
                 if 45 <= angle < 135:
                     candidates['N'].append((n, abs(hops - 25)))
                 elif -135 <= angle < -45:
@@ -75,13 +69,16 @@ def get_fixed_sources(G, num_sources=4):
                     candidates['W'].append((n, abs(hops - 25)))
     
     sources = []
-    # Select the node in each quadrant that is closest to exactly 25 hops
+    nodes_per_quadrant = num_sources // 4
+    
     for direction in ['N', 'S', 'E', 'W']:
         if candidates[direction]:
-            best_node = sorted(candidates[direction], key=lambda x: x[1])[0][0]
-            sources.append(best_node)
+            sorted_candidates = sorted(candidates[direction], key=lambda x: x[1])
+            for i in range(min(nodes_per_quadrant, len(sorted_candidates))):
+                sources.append(sorted_candidates[i][0])
             
     return sources
+
 
 def random_walk(G, start_node, steps, directed_steps=3):
     current_node = start_node
@@ -199,7 +196,7 @@ def run_adaptive_simulation(seed_val=42):
     print(f"Initializing adaptive network with seed {seed_val}...")
     G = create_wsn_graph(seed=seed_val)
     
-    fixed_sources = get_fixed_sources(G, num_sources=4)
+    fixed_sources = get_fixed_sources(G, num_sources=8)
     print(f"Selected Source Nodes: {fixed_sources}")
     
     dead_nodes = 0
@@ -259,7 +256,7 @@ def run_adaptive_simulation(seed_val=42):
                     top_n = min(2, len(candidate_distances))
                     current_dummy_sources = [node for node, dist in candidate_distances[:top_n]]
 
-                    
+
 
         # 1. State Evaluation & PSO Update
         coverage_ratio = (NUM_NODES - dead_nodes) / NUM_NODES
