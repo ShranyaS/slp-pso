@@ -164,6 +164,36 @@ def deduct_energy(G, path):
             G.nodes[receiver]['energy'] -= rx_energy
 
 
+def get_local_energy_gap(G, source_node, initial_energy):
+    """Calculates the energy gap for a specific source's local neighborhood."""
+    # Get 1-hop and 2-hop neighbors to capture the source hotspot
+    neighbors_1hop = set(G.neighbors(source_node))
+    neighbors_2hop = set()
+    for n in neighbors_1hop:
+        neighbors_2hop.update(G.neighbors(n))
+        
+    local_nodes = list(neighbors_1hop | neighbors_2hop)
+    local_sensors = [n for n in local_nodes if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] > 0]
+    
+    if not local_sensors:
+        return 1.0  # Max gap if the local neighborhood is entirely dead
+        
+    # Calculate local average energy
+    local_avg = sum(G.nodes[n]['energy'] for n in local_sensors) / len(local_sensors)
+    
+    # Calculate the global healthy baseline (top 10% of entire network)
+    alive_sensors = sorted([G.nodes[n]['energy'] for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] > 0])
+    if alive_sensors:
+        top_count = max(1, int(len(alive_sensors) * 0.10))
+        global_max_avg = sum(alive_sensors[-top_count:]) / top_count
+    else:
+        global_max_avg = initial_energy
+        
+    # Calculate the gap between the healthiest global nodes and this specific local hotspot
+    gap = (global_max_avg - local_avg) / initial_energy
+    return max(0.0, min(1.0, gap))  # Clamp between 0 and 1
+
+
 def run_adaptive_simulation(seed_val=42):
     random.seed(seed_val)
     print(f"Initializing adaptive network with seed {seed_val}...")
@@ -175,15 +205,15 @@ def run_adaptive_simulation(seed_val=42):
     dead_nodes = 0
     rounds_survived = 0
     
-    current_k = 8
-    current_f = 0.5
+    # Track parameters per source
+    source_params = {node: {'k': 8, 'f': 0.5} for node in fixed_sources}
     current_dummy_sources = []
     
     csv_filename = f"results/adaptive_results_{seed_val}.csv"
     # Log to CSV using the normalized plot variable, NOT the PSO sum
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f"])
+        writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f", "Total_Captures"])
         
     print(f"Starting adaptive simulation loop. Logging to {csv_filename}...")
 
@@ -195,7 +225,6 @@ def run_adaptive_simulation(seed_val=42):
         round_transmissions = {}
         
         # --- Decoy (Dummy Source) Rotation Logic ---
-        # Rotate every 50 rounds, or if the current decoys are uninitialized/dead
         if (current_round % DUMMY_ROTATION_INTERVAL == 0 or 
             not current_dummy_sources or 
             any(G.nodes[d]['energy'] <= 0 for d in current_dummy_sources)):
@@ -203,61 +232,91 @@ def run_adaptive_simulation(seed_val=42):
             active_sensors = [n for n in G.nodes() if G.nodes[n]['type'] == 'sensor' 
                               and G.nodes[n]['energy'] > 0 
                               and n not in fixed_sources]
+            
             if active_sensors:
-                # Select 2 distinct decoy nodes
-                current_dummy_sources = random.sample(active_sensors, min(2, len(active_sensors)))
+                active_real_sources = [s for s in fixed_sources if G.nodes[s]['energy'] > 0]
+                
+                # If all sources are dead, fallback to random
+                if not active_real_sources:
+                    current_dummy_sources = random.sample(active_sensors, min(2, len(active_sensors)))
+                else:
+                    # Spatial Decoy Maximization (Max-Min Distance)
+                    candidate_distances = []
+                    for candidate in active_sensors:
+                        cand_pos = np.array(G.nodes[candidate]['pos'])
+                        
+                        # Calculate distance to the closest active real source
+                        min_dist = min(
+                            np.linalg.norm(cand_pos - np.array(G.nodes[s]['pos'])) 
+                            for s in active_real_sources
+                        )
+                        candidate_distances.append((candidate, min_dist))
+                    
+                    # Sort descending (largest minimum distance first)
+                    candidate_distances.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # Select the 2 furthest nodes
+                    top_n = min(2, len(candidate_distances))
+                    current_dummy_sources = [node for node, dist in candidate_distances[:top_n]]
 
+                    
 
         # 1. State Evaluation & PSO Update
+        coverage_ratio = (NUM_NODES - dead_nodes) / NUM_NODES
+        
         if current_round % PSO_UPDATE_INTERVAL == 0:
-            alive_sensor_energies = sorted([G.nodes[n]['energy'] for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] > 0])
-            
-            if alive_sensor_energies:
-                # Average of the 10 most depleted nodes
-                min_energy_avg = sum(alive_sensor_energies[:10]) / 10.0
+            for source_node in fixed_sources:
+                if G.nodes[source_node]['energy'] <= 0:
+                    continue
+                    
+                local_gap = get_local_energy_gap(G, source_node, INITIAL_ENERGY)
+                opt_k, opt_f = run_pso(local_gap, coverage_ratio)
                 
-                # Average of the top 10% healthiest nodes
-                top_count = max(1, int(len(alive_sensor_energies) * 0.10))
-                max_energy_avg = sum(alive_sensor_energies[-top_count:]) / top_count
-                
-                # Calculate the gap (0.0 to 1.0). 0 means perfectly balanced, 1 means extreme imbalance.
-                energy_gap = (max_energy_avg - min_energy_avg) / INITIAL_ENERGY
-            else:
-                energy_gap = 1.0
+                # Enforce minimums to ensure late-game survival
+                source_params[source_node]['k'] = max(5, opt_k)
+                source_params[source_node]['f'] = max(0.2, opt_f)
 
-            coverage_ratio = (NUM_NODES - dead_nodes) / NUM_NODES
-            
-            # Pass the gap instead of the absolute ratio
-            current_k, current_f = run_pso(energy_gap, coverage_ratio)
-            
-            # Enforce stricter minimum privacy thresholds
-            # Allow deeper late-game energy savings
-            current_k = max(5, current_k)  
-            current_f = max(0.2, current_f)
+        # Calculate metrics for CSV Logging
+        all_sensor_energies = sorted([max(0, G.nodes[n]['energy']) for n in G.nodes() if G.nodes[n]['type'] == 'sensor'])
+        weakest_10_avg = sum(all_sensor_energies[:10]) / 10 if all_sensor_energies else 0
+        global_energy_ratio = weakest_10_avg / INITIAL_ENERGY
+        
+        active_sources = [s for s in fixed_sources if G.nodes[s]['energy'] > 0]
+        avg_k = sum(source_params[s]['k'] for s in active_sources) / len(active_sources) if active_sources else 0
+        avg_f = sum(source_params[s]['f'] for s in active_sources) / len(active_sources) if active_sources else 0
+
+        with open(csv_filename, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow([current_round, round(global_energy_ratio, 4), round(coverage_ratio, 4), round(avg_k, 2), round(avg_f, 2), total_captures])
 
             
         # 2. Routing Phase
         for source_node in fixed_sources:
             if G.nodes[source_node]['energy'] <= 0:
                 continue
+            
+            # Pull this specific source's parameters
+            s_k = source_params[source_node]['k']
+            s_f = source_params[source_node]['f']
                 
             # Real Traffic
-            phantom_path, phantom_node = random_walk(G, source_node, current_k)
+            phantom_path, phantom_node = random_walk(G, source_node, s_k)
             sink_path = route_to_sink(G, phantom_node)
             
             if not sink_path:
-                continue
+                continue 
                 
             full_path = phantom_path[:-1] + sink_path
-            deduct_energy(G, full_path)
-            packets_delivered += 1
-
-            for i in range(len(full_path) - 1):
-                sender = full_path[i]
-                round_transmissions[sender] = round_transmissions.get(sender, 0) + 1
+            
+            if full_path:
+                deduct_energy(G, full_path)
+                packets_delivered += 1
+                for i in range(len(full_path) - 1):
+                    sender = full_path[i]
+                    round_transmissions[sender] = round_transmissions.get(sender, 0) + 1
                 
             # Targeted Fake Traffic (Decoy Scheme)
-            if random.random() < current_f and current_dummy_sources:
+            if random.random() < s_f and current_dummy_sources:
                 fake_source = random.choice(current_dummy_sources)
                 if G.nodes[fake_source]['energy'] > 0:
                     fake_path = route_to_sink(G, fake_source)
@@ -266,7 +325,8 @@ def run_adaptive_simulation(seed_val=42):
                         for i in range(len(fake_path) - 1):
                             sender = fake_path[i]
                             round_transmissions[sender] = round_transmissions.get(sender, 0) + 1
-        
+
+
         # --- Adversary Step ---
         hunter.step(round_transmissions, G, fixed_sources)
         if hunter.is_captured:

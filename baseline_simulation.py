@@ -191,7 +191,7 @@ def run_simulation(seed_val=42):
     csv_filename = f"results/baseline_results_{seed_val}.csv"
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f"])
+        writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f", "Total_Captures"])
         
     print(f"Starting simulation loop. Logging to {csv_filename}...")
 
@@ -224,7 +224,7 @@ def run_simulation(seed_val=42):
         
         with open(csv_filename, mode='a', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow([current_round, round(energy_ratio, 4), round(coverage_ratio, 4), K_PHANTOM_HOPS, FAKE_TRAFFIC_RATIO])
+            writer.writerow([current_round, round(energy_ratio, 4), round(coverage_ratio, 4), K_PHANTOM_HOPS, FAKE_TRAFFIC_RATIO, total_captures])
 
         # Every round, EACH fixed source generates a packet
         # [Keep the rest of your routing loop unchanged below this line]
