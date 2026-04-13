@@ -31,11 +31,13 @@ class Adversary:
         self.is_captured = False
 
     def step(self, transmissions, G, source_nodes):
-        # transmissions is a dict: {sender_node_id: transmission_count}
-        # The adversary only hears nodes within its 80m communication range (its graph neighbors)
+        # 2-Hop Hearing Range Upgrade
         neighbors = list(G.neighbors(self.current_node))
+        extended_neighbors = set(neighbors)
+        for n in neighbors:
+            extended_neighbors.update(G.neighbors(n))
         
-        heard_senders = {node: count for node, count in transmissions.items() if node in neighbors}
+        heard_senders = {node: count for node, count in transmissions.items() if node in extended_neighbors}
 
         if heard_senders:
             # Traffic Analysis: move to the node that transmitted the most packets
@@ -45,7 +47,6 @@ class Adversary:
 
             if self.current_node in source_nodes:
                 self.is_captured = True
-
 
 
 def random_walk(G, start_node, steps, directed_steps=3):
