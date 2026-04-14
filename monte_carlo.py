@@ -5,7 +5,7 @@ from baseline_simulation import run_simulation as run_baseline
 from adaptive_simulation import run_adaptive_simulation as run_adaptive
 
 # Number of parallel simulations to run
-NUM_RUNS = 10
+NUM_RUNS = 100
 
 def run_single_iteration(seed_val):
     # Runs both simulations for a specific seed

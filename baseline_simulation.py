@@ -31,23 +31,16 @@ class Adversary:
         self.is_captured = False
 
     def step(self, transmissions, G, source_nodes):
-        # 2-Hop Hearing Range Upgrade
-        neighbors = list(G.neighbors(self.current_node))
-        extended_neighbors = set(neighbors)
-        for n in neighbors:
-            extended_neighbors.update(G.neighbors(n))
-        
-        heard_senders = {node: count for node, count in transmissions.items() if node in extended_neighbors}
+     neighbors = list(G.neighbors(self.current_node))
+     heard_senders = {node: count for node, count in transmissions.items() if node in neighbors}
 
-        if heard_senders:
-            # Traffic Analysis: move to the node that transmitted the most packets
-            next_node = max(heard_senders, key=heard_senders.get)
-            self.current_node = next_node
-            self.hop_count += 1
-
-            if self.current_node in source_nodes:
-                self.is_captured = True
-
+     if heard_senders:
+         next_node = max(heard_senders, key=heard_senders.get)
+         self.current_node = next_node
+         self.hop_count += 1
+         if self.current_node in source_nodes:
+             self.is_captured = True
+             
 
 def random_walk(G, start_node, steps, directed_steps=3):
     current_node = start_node
@@ -133,7 +126,7 @@ def deduct_energy(G, path):
 
 
 
-def get_fixed_sources(G, num_sources=8):
+def get_fixed_sources(G, num_sources=4):
     """
     Selects source nodes based on the Scenario All Directions (SAD) geometry.
     Nodes are placed N, S, E, W at approximately 25 hops from the sink.
