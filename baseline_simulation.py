@@ -24,6 +24,49 @@ PACKET_SIZE = 2000  # bits per packet
 
 DUMMY_ROTATION_INTERVAL = 50
 
+def calculate_entropy(round_transmissions):
+    """
+    Calculates Shannon Entropy based on the traffic distribution of the network.
+    Higher entropy means the traffic is spread more uniformly across the grid.
+    """
+    total_traffic = sum(round_transmissions.values())
+    if total_traffic == 0:
+        return 0.0
+    
+    entropy = 0.0
+    for packets in round_transmissions.values():
+        p_i = packets / total_traffic
+        entropy -= p_i * math.log2(p_i)
+    return entropy
+
+
+def calculate_evidence_conflict(G, real_sources, dummy_sources):
+    """
+    Calculates the Dempster-Shafer Spatial Conflict.
+    Because decoy selection is radius-based, this measures the physical 
+    Euclidean distance between real traffic hotspots and fake traffic hotspots.
+    """
+    active_real = [s for s in real_sources if G.nodes[s]['energy'] > 0]
+    active_dummy = [d for d in dummy_sources if G.nodes[d]['energy'] > 0]
+    
+    if not active_real or not active_dummy:
+        return 0.0
+        
+    total_distance = 0.0
+    comparisons = 0
+    
+    for real in active_real:
+        real_pos = np.array(G.nodes[real]['pos'])
+        for dummy in active_dummy:
+            dummy_pos = np.array(G.nodes[dummy]['pos'])
+            dist = np.linalg.norm(real_pos - dummy_pos)
+            total_distance += dist
+            comparisons += 1
+            
+    # Returns the average physical conflict (distance) in meters
+    return total_distance / comparisons if comparisons > 0 else 0.0
+
+
 class Adversary:
     def __init__(self, start_node):
         self.current_node = start_node
@@ -40,7 +83,7 @@ class Adversary:
          self.hop_count += 1
          if self.current_node in source_nodes:
              self.is_captured = True
-             
+
 
 def random_walk(G, start_node, steps, directed_steps=3):
     current_node = start_node
@@ -182,7 +225,8 @@ def run_simulation(seed_val=42):
     csv_filename = f"results/baseline_results_{seed_val}.csv"
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f", "Total_Captures"])
+        writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f", "Total_Captures", "Network_Entropy", "Spatial_Conflict"])
+
         
     print(f"Starting simulation loop. Logging to {csv_filename}...")
 
@@ -238,9 +282,9 @@ def run_simulation(seed_val=42):
         energy_ratio = weakest_10_avg / INITIAL_ENERGY
         coverage_ratio = (NUM_NODES - dead_nodes) / NUM_NODES
         
-        with open(csv_filename, mode='a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([current_round, round(energy_ratio, 4), round(coverage_ratio, 4), K_PHANTOM_HOPS, FAKE_TRAFFIC_RATIO, total_captures])
+        # with open(csv_filename, mode='a', newline='') as file:
+        #     writer = csv.writer(file)
+        #     writer.writerow([current_round, round(energy_ratio, 4), round(coverage_ratio, 4), K_PHANTOM_HOPS, FAKE_TRAFFIC_RATIO, total_captures])
 
         # Every round, EACH fixed source generates a packet
         # [Keep the rest of your routing loop unchanged below this line]
@@ -285,6 +329,22 @@ def run_simulation(seed_val=42):
         current_dead = sum(1 for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] <= 0)
         if current_dead > dead_nodes:
             dead_nodes = current_dead
+
+        current_entropy = calculate_entropy(round_transmissions)
+        current_conflict = calculate_evidence_conflict(G, fixed_sources, current_dummy_sources)
+
+        with open(csv_filename, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                current_round, 
+                round(energy_ratio, 4),        # Corrected variable
+                round(coverage_ratio, 4), 
+                round(K_PHANTOM_HOPS, 2),      # Corrected variable
+                round(FAKE_TRAFFIC_RATIO, 2),  # Corrected variable
+                total_captures,
+                round(current_entropy, 4),
+                round(current_conflict, 2)
+            ])
             
         rounds_survived = current_round
         

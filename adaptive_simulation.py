@@ -12,12 +12,53 @@ import numpy as np
 MAX_ROUNDS = 3000
 # TX_ENERGY = 0.005  
 # RX_ENERGY = 0.005  
-PSO_UPDATE_INTERVAL = 1  # Recalculate k and f every 10 rounds
+PSO_UPDATE_INTERVAL = 1  
 E_ELEC = 50e-9      # 50 nJ/bit for running transmitter/receiver circuitry
 E_AMP = 100e-12     # 100 pJ/bit/m^2 for the transmit amplifier
 PACKET_SIZE = 2000  # bits per packet
 DUMMY_ROTATION_INTERVAL = 50
 
+def calculate_entropy(round_transmissions):
+    """
+    Calculates Shannon Entropy based on the traffic distribution of the network.
+    Higher entropy means the traffic is spread more uniformly across the grid.
+    """
+    total_traffic = sum(round_transmissions.values())
+    if total_traffic == 0:
+        return 0.0
+    
+    entropy = 0.0
+    for packets in round_transmissions.values():
+        p_i = packets / total_traffic
+        entropy -= p_i * math.log2(p_i)
+    return entropy
+
+
+def calculate_evidence_conflict(G, real_sources, dummy_sources):
+    """
+    Calculates the Dempster-Shafer Spatial Conflict.
+    Because decoy selection is radius-based, this measures the physical 
+    Euclidean distance between real traffic hotspots and fake traffic hotspots.
+    """
+    active_real = [s for s in real_sources if G.nodes[s]['energy'] > 0]
+    active_dummy = [d for d in dummy_sources if G.nodes[d]['energy'] > 0]
+    
+    if not active_real or not active_dummy:
+        return 0.0
+        
+    total_distance = 0.0
+    comparisons = 0
+    
+    for real in active_real:
+        real_pos = np.array(G.nodes[real]['pos'])
+        for dummy in active_dummy:
+            dummy_pos = np.array(G.nodes[dummy]['pos'])
+            dist = np.linalg.norm(real_pos - dummy_pos)
+            total_distance += dist
+            comparisons += 1
+            
+    # Returns the average physical conflict (distance) in meters
+    return total_distance / comparisons if comparisons > 0 else 0.0
 
 class Adversary:
     def __init__(self, start_node):
@@ -35,7 +76,7 @@ class Adversary:
          self.hop_count += 1
          if self.current_node in source_nodes:
              self.is_captured = True
-             
+
 
 def get_fixed_sources(G, num_sources=4):
     """
@@ -192,7 +233,7 @@ def run_adaptive_simulation(seed_val=42):
     print(f"Initializing adaptive network with seed {seed_val}...")
     G = create_wsn_graph(seed=seed_val)
     
-    fixed_sources = get_fixed_sources(G, num_sources=8)
+    fixed_sources = get_fixed_sources(G, num_sources=4)
     print(f"Selected Source Nodes: {fixed_sources}")
     
     dead_nodes = 0
@@ -206,7 +247,8 @@ def run_adaptive_simulation(seed_val=42):
     # Log to CSV using the normalized plot variable, NOT the PSO sum
     with open(csv_filename, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f", "Total_Captures"])
+        writer.writerow(["Round", "Hotspot_Energy_Ratio", "Coverage_Ratio", "k", "f", "Total_Captures", "Network_Entropy", "Spatial_Conflict"])
+        
         
     print(f"Starting adaptive simulation loop. Logging to {csv_filename}...")
 
@@ -278,9 +320,9 @@ def run_adaptive_simulation(seed_val=42):
         avg_k = sum(source_params[s]['k'] for s in active_sources) / len(active_sources) if active_sources else 0
         avg_f = sum(source_params[s]['f'] for s in active_sources) / len(active_sources) if active_sources else 0
 
-        with open(csv_filename, mode='a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow([current_round, round(global_energy_ratio, 4), round(coverage_ratio, 4), round(avg_k, 2), round(avg_f, 2), total_captures])
+        # with open(csv_filename, mode='a', newline='') as file:
+        #     writer = csv.writer(file)
+        #     writer.writerow([current_round, round(global_energy_ratio, 4), round(coverage_ratio, 4), round(avg_k, 2), round(avg_f, 2), total_captures])
 
             
         # 2. Routing Phase
@@ -332,6 +374,24 @@ def run_adaptive_simulation(seed_val=42):
         current_dead = sum(1 for n in G.nodes() if G.nodes[n]['type'] == 'sensor' and G.nodes[n]['energy'] <= 0)
         if current_dead > dead_nodes:
             dead_nodes = current_dead
+
+        # --- Metrics Calculation & CSV Logging ---
+        current_entropy = calculate_entropy(round_transmissions)
+        current_conflict = calculate_evidence_conflict(G, fixed_sources, current_dummy_sources)
+        
+        with open(csv_filename, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                current_round, 
+                round(global_energy_ratio, 4), 
+                round(coverage_ratio, 4), 
+                round(avg_k, 2),               
+                round(avg_f, 2),               
+                total_captures,
+                round(current_entropy, 4),
+                round(current_conflict, 2)
+            ])
+                
             
         rounds_survived = current_round
         
